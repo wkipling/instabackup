@@ -36,15 +36,31 @@ jobs:
       - name: Python syntax
         run: python3 -m py_compile camera/*.py server/*.py tools/*.py
 
-      - name: Build camera tools
+      - name: Toolchain versions
         run: |
-          set -e
-          sh camera/build_insupload.sh
-          sh camera/build_tailrelay.sh
-          ZIG=zig sh camera/build_x4preload.sh
+          python3 --version
+          zig version
+          openssl version
+
+      - name: Build insupload
+        run: sh camera/build_insupload.sh
+
+      - name: Build tailrelay
+        run: sh camera/build_tailrelay.sh
+
+      - name: Build X4 preload library
+        run: ZIG=zig sh camera/build_x4preload.sh
+
+      - name: Build cloudkick
+        run: |
           python3 camera/cloudkick_build.py camera/cloudkick
-          chmod +x camera/cloudkick camera/insupload camera/tailrelay
-          sh camera/make_certs.sh camera/certs 127.0.0.1
+          chmod +x camera/cloudkick
+
+      - name: Generate throwaway certificates
+        run: sh camera/make_certs.sh camera/certs 127.0.0.1
+
+      - name: Make helpers executable
+        run: chmod +x camera/insupload camera/tailrelay camera/cloudkick
 
       - name: Tests
         working-directory: camera
