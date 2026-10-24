@@ -25,6 +25,7 @@ import os
 import re
 import shutil
 import ssl
+import subprocess
 import sys
 import threading
 import time
@@ -884,6 +885,11 @@ def main() -> int:
     ap.add_argument("--port", type=int, default=443)
     ap.add_argument("--cert", default="", help="TLS certificate (PEM)")
     ap.add_argument("--key", default="", help="TLS private key (PEM)")
+    ap.add_argument("--generate-certs", metavar="DIR", default="",
+                    help="generate a local CA and server certificate in DIR "
+                         "when --cert/--key are not supplied")
+    ap.add_argument("--generate-certs-only", action="store_true",
+                    help="generate the certificates and exit")
     ap.add_argument("--public-base", default="https://service-test.insta360.com",
                     help="base URL handed to the camera for uploads")
     ap.add_argument("--part-size", type=int, default=PART_SIZE_DEFAULT)
@@ -892,6 +898,33 @@ def main() -> int:
 
     if args.cert and not args.key or args.key and not args.cert:
         ap.error("--cert and --key must be given together")
+
+    if args.generate_certs and not args.cert and not args.key:
+        certdir = os.path.abspath(args.generate_certs)
+        script = os.path.normpath(os.path.join(
+            os.path.dirname(os.path.abspath(__file__)),
+            "..", "camera", "make_certs.sh"))
+        if not os.path.isfile(script):
+            ap.error("--generate-certs needs camera/make_certs.sh "
+                     "next to server/")
+        crt = os.path.join(certdir, "server.crt")
+        key = os.path.join(certdir, "server.key")
+        if not (os.path.isfile(crt) and os.path.isfile(key)):
+            os.makedirs(certdir, exist_ok=True)
+            try:
+                subprocess.run(["sh", script, certdir], check=True)
+            except (OSError, subprocess.CalledProcessError) as exc:
+                ap.error("certificate generation failed: %s" % exc)
+        args.cert, args.key = crt, key
+        print("using generated certificate: %s" % crt)
+        print("copy %s and %s to the SD card root"
+              % (os.path.join(certdir, "ca.crt"),
+                 os.path.join(certdir, "ca.hash")))
+
+    if args.generate_certs_only:
+        if not args.generate_certs:
+            ap.error("--generate-certs-only requires --generate-certs DIR")
+        return 0
 
     httpd = make_server(args)
     try:

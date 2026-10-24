@@ -59,6 +59,13 @@ jobs:
       - name: Generate throwaway certificates
         run: sh camera/make_certs.sh camera/certs 127.0.0.1
 
+      - name: Self-generated server certificates
+        run: |
+          python3 server/inscloud_server.py \
+            --generate-certs /tmp/test-certs --generate-certs-only
+          test -s /tmp/test-certs/server.crt
+          test -s /tmp/test-certs/ca.hash
+
       - name: Make helpers executable
         run: chmod +x camera/insupload camera/tailrelay camera/cloudkick
 

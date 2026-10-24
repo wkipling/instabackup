@@ -10,6 +10,7 @@ stale server copy.
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import select
 import shutil
@@ -20,6 +21,7 @@ import tempfile
 import threading
 import time
 import unittest
+import urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -233,6 +235,26 @@ class UploadTest(unittest.TestCase):
         )
         self.assertEqual(res.returncode, 0, res.stderr)
         self.assertEqual(data, (self.recv / name).read_bytes())
+    def test_dashboard_and_file_list(self) -> None:
+        name = "VID_20250101_000006_001.insv"
+        data = os.urandom(250_000)
+        (self.media / name).write_bytes(data)
+        res = self.run_uploader("--once")
+        self.assertEqual(res.returncode, 0, res.stderr)
+
+        files = json.loads(urllib.request.urlopen(
+            self.rx.url + "/api/files", timeout=5).read())
+        match = [row for row in files["files"] if row["path"] == name]
+        self.assertEqual(len(match), 1, files)
+        self.assertEqual(match[0]["size"], len(data))
+        self.assertGreater(match[0]["mtime"], 0)
+
+        html = urllib.request.urlopen(
+            self.rx.url + "/", timeout=5).read().decode()
+        self.assertNotIn("http-equiv=refresh", html)
+        self.assertIn('id="bootstrap"', html)
+        self.assertIn("Incoming", html)
+        self.assertIn("Filter by path", html)
 
 
 if __name__ == "__main__":

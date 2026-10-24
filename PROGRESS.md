@@ -1497,3 +1497,41 @@ same `/app` (read-only token) and `/data` mounts, then recreated on 8844:
 Health: `healthy`; `/api/status` still reports the 2.09 GB already stored and
 the 90 MB partial.  No podman is involved on Unraid; this uses its normal
 Docker daemon.
+
+## 19. Dashboard redesign and simpler onboarding (2026-10-24)
+
+### Live dashboard
+
+`GET /` is now a single-page live view; the `<meta http-equiv=refresh>` tag is
+gone.  JavaScript polls `/api/status` every 2 s and updates only the changed
+nodes, pausing while the tab is hidden.  It shows:
+
+* **Incoming** - active uploads with a progress bar, bytes, MB/s and ETA;
+* **Waiting to resume** - partial files that are not currently being written;
+* **Files** - every completed file with size and mtime, plus a path filter;
+* summary figures for stored files, bytes, free space and last activity.
+
+`GET /api/files` was added (read-only, unauthenticated like `/api/status`) and
+returns path/size/mtime for every completed file.  `Status.completed` now
+stores `(bytes, mtime)` and `Status.file_list()` serves the ledger.  The active
+map drops entries after `SDCARD_ACTIVE_GRACE` seconds (default 15) so a dropped
+connection becomes "waiting to resume" instead of a stale progress bar.
+
+Fixed while testing: `.part` files found at startup were keyed with the
+`.part` suffix, while uploads address the target path.  After a restart, a
+completed file could leave a ghost partial.  `_scan` now strips `.part` and
+drops partials that already have a final file.
+
+### Simpler docs and onboarding
+
+* README rewritten around the direct X4 Air path; long-form material moved to
+  `notes/ADVANCED.md`.  It states explicitly that only X4 Air 1.2.7 is tested,
+  with X4 1.9.21 and X5 listed as untested.
+* `scripts/setup-server.sh` - Docker-only one-command receiver setup (token,
+  pull, run; `--replace`, `--dry-run`), no Compose requirement.
+* `inscloud_server.py --generate-certs DIR` and `--generate-certs-only` now
+  create the paid-cloud CA/server certs via `camera/make_certs.sh`, so the
+  advanced path no longer needs a separate cert step.  The direct path needs
+  no certificates at all.
+* CI checks the self-generated certificates and the `/api/files` + dashboard
+  response.

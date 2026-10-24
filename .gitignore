@@ -9,6 +9,7 @@ tools/jdk/
 tools/ghidra/
 work/
 dist/
+.preview/
 
 # Generated camera binaries (built by camera/build_*.sh / cloudkick_build.py)
 camera/insupload
