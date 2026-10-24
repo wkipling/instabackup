@@ -9,9 +9,18 @@ set -eu
 
 HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/.." && pwd)
-ZIG=${ZIG:-$ROOT/vendor/pyzig/ziglang/zig}
-
-[ -x "$ZIG" ] || { echo "Zig not found at $ZIG" >&2; exit 1; }
+if [ -z "${ZIG:-}" ]; then
+    if [ -x "$ROOT/vendor/pyzig/ziglang/zig" ]; then
+        ZIG=$ROOT/vendor/pyzig/ziglang/zig
+    else
+        ZIG=zig
+    fi
+fi
+# ZIG may be an absolute path or a command name on PATH.
+if [ ! -x "$ZIG" ] && ! command -v "$ZIG" >/dev/null 2>&1; then
+    echo "Zig not found at $ZIG" >&2
+    exit 1
+fi
 
 mkdir -p "$ROOT/camera/build"
 "$ZIG" cc -target aarch64-linux-gnu -Os -fPIC -shared -nostdlib \
