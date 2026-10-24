@@ -145,6 +145,11 @@ class Status:
         # A .part left beside an already-complete file is not resumable.
         self.partials = {path: size for path, size in self.partials.items()
                          if path not in self.completed}
+        # After a restart there is no request history; the newest file mtime is
+        # the most honest "last activity" we can show.
+        mtimes = [mtime for _size, mtime in self.completed.values()]
+        if mtimes:
+            self.last_activity = max(mtimes)
 
     def _mtime(self, rel: str) -> float:
         try:
