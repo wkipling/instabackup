@@ -521,7 +521,18 @@ def _pick_card(scr) -> str | None:
     return cards[idx] if idx is not None else None
 
 
-def _pick_wifi(scr) -> tuple[str, str, str, bool] | None:
+def _existing_ssid(sd: str) -> str:
+    path = Path(sd) / "wifi-sta.conf"
+    try:
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            if line.startswith("WIFI_SSID="):
+                return line.split("=", 1)[1].strip()
+    except OSError:
+        pass
+    return ""
+
+
+def _pick_wifi(scr, sd: str = "") -> tuple[str, str, str, bool] | None:
     """Return (ssid, password, country, remove_existing).
 
     An empty SSID with remove_existing=False means "leave the card's current
@@ -529,18 +540,31 @@ def _pick_wifi(scr) -> tuple[str, str, str, bool] | None:
     """
     while True:
         nets = scan_wifi()
+        preserved = _existing_ssid(sd)
         subtitle = ("Choose the network the camera should join.  At a hotel "
                     "this is your phone's hotspot.")
-        items = ["%s   (%d%%)%s" % (s, sig, "  " + sec if sec else "  open")
-                 for s, sig, sec in nets]
-        items += ["Rescan", "Enter SSID manually", "Do not switch (keep camera AP)"]
+        entries: list[tuple[str, object]] = []
+        items: list[str] = []
+        if preserved:
+            entries.append(("keep", None))
+            items.append("Keep the card's current network: %s" % preserved)
+        for net in nets:
+            entries.append(("net", net))
+        entries += [("rescan", None), ("manual", None), ("ap", None)]
+        items += ["%s   (%d%%)%s" % (s, sig, "  " + sec if sec else "  open")
+                  for s, sig, sec in nets]
+        items += ["Rescan", "Enter SSID manually",
+                  "Do not switch (keep camera AP)"]
         idx = _menu(scr, "Wi-Fi", subtitle, items,
                     "up/down selects, Enter accepts, q cancels setup")
         if idx is None:
             return None
-        if idx == len(items) - 1:
+        kind, net = entries[idx]
+        if kind == "keep":
+            return "", "", "", False
+        if kind == "ap":
             return "", "", "", True
-        if idx == len(items) - 2:
+        if kind == "manual":
             ssid = _prompt(scr, "Wi-Fi", "Enter the network name exactly.",
                            "SSID: ", default="")
             if ssid is None:
@@ -552,10 +576,10 @@ def _pick_wifi(scr) -> tuple[str, str, str, bool] | None:
             if protected is None:
                 continue
             security = "manual" if protected else ""
-        elif idx == len(items) - 3:
-            continue  # Rescan
+        elif kind == "rescan":
+            continue
         else:
-            ssid, _sig, security = nets[idx]
+            ssid, _sig, security = net  # type: ignore[misc]
 
         password = ""
         if security:
@@ -888,7 +912,7 @@ def interactive() -> int:
                 return 1
             plan.sd = sd
 
-            picked = _pick_wifi(scr)
+            picked = _pick_wifi(scr, plan.sd)
             if picked is None:
                 return 1
             ssid, password, country, no_wifi = picked
