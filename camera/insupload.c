@@ -36,7 +36,10 @@
 #include <time.h>
 #include <unistd.h>
 
-#define CHUNK (1 << 20)
+/* 8 MiB keeps one PUT's overhead small (each request is a fresh
+ * connection through tailscaled) while still resuming in coarse steps
+ * if the hotspot drops.  The receiver accepts up to 32 MiB. */
+#define CHUNK (8 << 20)
 #define RESP_CAP (64 << 10)
 #define CONNECT_TIMEOUT_MS 15000
 #define IO_TIMEOUT_S 45
