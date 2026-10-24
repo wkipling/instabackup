@@ -1479,3 +1479,21 @@ unauthenticated and read-only; uploads are not.
 gitignored.  The TUI supplies the Wi-Fi password, upload token and Tailscale
 auth key as mode-0600 temporary files (`--wifi-conf`, `--upload-token-file`,
 `--authkey-file`), so none appears in argv or shell history.
+
+### Live container switched to the published image (2026-10-24)
+
+`insta360-sink` on the Unraid box (`rack720xd-unraid`) now runs
+`ghcr.io/wkipling/instabackup:latest` instead of the ad-hoc
+`python:3.12-slim` container.  It was first tested on a spare port with the
+same `/app` (read-only token) and `/data` mounts, then recreated on 8844:
+
+* image: `ghcr.io/wkipling/instabackup:latest`
+* user `99:100`, `--restart unless-stopped`
+* `-p 8844:8844`
+* `-v /mnt/user/appdata/insta360-backup:/app:ro`
+* `-v /mnt/user/MyShare/insta360-backup/sdcard:/data`
+* `SDCARD_ROOT=/data`, `SDCARD_PORT=8844`, `SDCARD_TOKEN_FILE=/app/sd-token`
+
+Health: `healthy`; `/api/status` still reports the 2.09 GB already stored and
+the 90 MB partial.  No podman is involved on Unraid; this uses its normal
+Docker daemon.

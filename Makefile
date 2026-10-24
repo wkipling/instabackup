@@ -17,7 +17,7 @@ build:
 certs:
 	sh camera/make_certs.sh camera/certs 127.0.0.1
 
-test: build
+test: build certs
 	cd camera && python3 test_setup_tui.py
 	cd camera && python3 test_wifi_connect.py
 	cd camera && python3 test_sdcard_push.py
