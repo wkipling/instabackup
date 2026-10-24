@@ -1535,3 +1535,9 @@ drops partials that already have a final file.
   no certificates at all.
 * CI checks the self-generated certificates and the `/api/files` + dashboard
   response.
+
+Found during live deployment: the `/app` bind mount (used for `sd-token`)
+was shadowing the receiver code baked into the image, so the container kept
+running a stale scp'd copy.  The Dockerfile now installs the receiver under
+`/opt/instabackup/` and the entrypoint execs that path, leaving `/app` free
+for the token mount.

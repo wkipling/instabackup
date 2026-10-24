@@ -27,4 +27,4 @@ if [ -n "${SDCARD_MIN_FREE_MB:-}" ]; then
     set -- "$@" --min-free-mb "$SDCARD_MIN_FREE_MB"
 fi
 
-exec python3 /app/sdcard_receiver.py "$@"
+exec python3 /opt/instabackup/sdcard_receiver.py "$@"

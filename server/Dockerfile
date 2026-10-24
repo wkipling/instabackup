@@ -25,7 +25,7 @@ RUN if ! getent group "${GID}" >/dev/null; then groupadd -g "${GID}" app; fi \
  && chown "${UID}:${GID}" /data
 
 WORKDIR /app
-COPY server/sdcard_receiver.py /app/sdcard_receiver.py
+COPY server/sdcard_receiver.py /opt/instabackup/sdcard_receiver.py
 COPY server/docker-entrypoint.sh /usr/local/bin/instabackup-entrypoint
 
 RUN chmod 0755 /usr/local/bin/instabackup-entrypoint
