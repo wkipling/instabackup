@@ -1,0 +1,10 @@
+vendor
+analysis
+notes
+tools/jadx
+tools/jdk
+camera
+.git
+.github
+appdata
+data

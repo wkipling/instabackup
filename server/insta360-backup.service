@@ -1,0 +1,46 @@
+# Example systemd unit for the self-hosted Insta360 backup service.
+#
+# Install:
+#   sudo install -d /opt/insta360-backup /srv/insta360-backup /etc/insta360-backup
+#   sudo cp inscloud_server.py /opt/insta360-backup/
+#   sudo cp server.crt server.key /etc/insta360-backup/
+#   sudo useradd --system --home /srv/insta360-backup --shell /sbin/nologin insta360
+#   sudo chown -R insta360:insta360 /srv/insta360-backup
+#   sudo chown root:insta360 /etc/insta360-backup/server.key
+#   sudo chmod 640 /etc/insta360-backup/server.key
+#   sudo cp insta360-backup.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now insta360-backup
+#
+# The camera always calls the API on HTTPS port 443, so the service needs
+# CAP_NET_BIND_SERVICE (given below) or must run as root.
+
+[Unit]
+Description=Self-hosted Insta360 camera cloud backup
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=insta360
+Group=insta360
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+ExecStart=/usr/bin/python3 /opt/insta360-backup/inscloud_server.py \
+    --root /srv/insta360-backup \
+    --bind 0.0.0.0 \
+    --port 443 \
+    --cert /etc/insta360-backup/server.crt \
+    --key /etc/insta360-backup/server.key \
+    --public-base https://service-test.insta360.com
+Environment=PYTHONDONTWRITEBYTECODE=1
+Restart=on-failure
+RestartSec=2
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/srv/insta360-backup
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,58 @@
+name: release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  camera-binaries:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: "0.17.0"
+
+      - name: Build AArch64 helpers
+        run: |
+          set -e
+          sh camera/build_insupload.sh
+          sh camera/build_tailrelay.sh
+          ZIG=zig sh camera/build_x4preload.sh
+          python3 camera/cloudkick_build.py camera/cloudkick
+          chmod +x camera/cloudkick camera/insupload camera/tailrelay
+
+      - name: Package card runtime
+        run: |
+          set -e
+          mkdir -p dist/instabackup-camera
+          cp camera/insupload camera/tailrelay camera/cloudkick \
+             camera/libcloudbootstrap.so \
+             camera/bootup.sh camera/cloud-upload-watch.sh \
+             camera/wifi-connect.sh camera/wifi-watchdog.sh \
+             camera/install_to_sd.sh camera/verify_sd.sh \
+             camera/make_certs.sh camera/cloud-backup.conf.example \
+             dist/instabackup-camera/
+          cp camera/insupload camera/tailrelay camera/cloudkick \
+             camera/libcloudbootstrap.so dist/
+          (cd dist/instabackup-camera && sha256sum * > ../SHA256SUMS)
+          (cd dist && sha256sum insupload tailrelay cloudkick \
+             libcloudbootstrap.so >> SHA256SUMS)
+          tar -C dist -czf dist/instabackup-camera-aarch64.tar.gz instabackup-camera
+          (cd dist && sha256sum instabackup-camera-aarch64.tar.gz >> SHA256SUMS)
+
+      - name: Publish release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/instabackup-camera-aarch64.tar.gz
+            dist/insupload
+            dist/tailrelay
+            dist/cloudkick
+            dist/libcloudbootstrap.so
+            dist/SHA256SUMS
+          generate_release_notes: true

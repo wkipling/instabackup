@@ -1,0 +1,63 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - uses: mlugg/setup-zig@v2
+        with:
+          version: "0.17.0"
+
+      - name: Install test dependencies
+        run: python3 -m pip install --upgrade pip capstone
+
+      - name: Shell syntax
+        run: |
+          set -e
+          for f in camera/*.sh server/*.sh; do
+            echo "sh -n $f"
+            sh -n "$f"
+          done
+
+      - name: Python syntax
+        run: python3 -m py_compile camera/*.py server/*.py tools/*.py
+
+      - name: Build camera tools
+        run: |
+          set -e
+          sh camera/build_insupload.sh
+          sh camera/build_tailrelay.sh
+          ZIG=zig sh camera/build_x4preload.sh
+          python3 camera/cloudkick_build.py camera/cloudkick
+          chmod +x camera/cloudkick camera/insupload camera/tailrelay
+          sh camera/make_certs.sh camera/certs 127.0.0.1
+
+      - name: Tests
+        working-directory: camera
+        run: |
+          set -e
+          python3 test_setup_tui.py
+          python3 test_wifi_connect.py
+          python3 test_sdcard_push.py
+          python3 test_install_x4air.py
+          python3 test_cloudkick.py
+          python3 test_tailrelay.py
+          python3 test_x4preload.py
+          python3 test_x4_bootstrap.py
+          # Skips cleanly when the x86_64 tailscaled binary is not vendored.
+          python3 test_tailscaled_proxy.py
+          python3 ../server/selftest.py

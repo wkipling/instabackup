@@ -1,0 +1,148 @@
+# Copy this file to the root of the camera SD card as: cloud-backup.conf
+# It is sourced by bootup.sh (POSIX sh).
+
+# Where the camera sends cloud traffic.
+#   lan       - cloud hostnames resolve to SERVER_IP (camera and server on the
+#               same network; this is the original setup)
+#   tailscale - cloud hostnames resolve to 127.0.0.1 and tailrelay tunnels
+#               through tailscaled to TAILNET_TARGET.  Works from any Wi-Fi or
+#               phone hotspot, with no port forwarding.
+BACKUP_MODE=lan
+
+# IPv4 address of the machine running inscloud_server.py.
+# Required for BACKUP_MODE=lan; ignored (may be empty) in tailscale mode.
+SERVER_IP=192.168.1.10
+
+# --- BACKUP_MODE=tailscale settings --------------------------------------
+# IPv4 address of the home server inside the tailnet.  On the server run:
+#   tailscale ip -4        -> e.g. 100.101.102.103
+# The camera's tailrelay CONNECTs to this address; it is not a LAN address.
+#TAILNET_TARGET=100.101.102.103
+
+# Reusable Tailscale auth key (admin console -> Settings -> Keys).  Only
+# needed for the first login; the node state is kept on the SD card.  Prefer
+# a tagged, non-ephemeral, expiring key.  Treat it like a password.
+#TAILSCALE_AUTHKEY=tskey-auth-xxxxxxxxxxxxxxxx
+
+# Name shown in the Tailscale admin console.
+#TAILSCALE_HOSTNAME=insta360-cam
+
+# Local port of tailscaled's outbound HTTP proxy.  tailrelay uses it.
+#TAILSCALE_PROXY_PORT=8080
+
+# Local port tailrelay listens on.  Must stay 443: the camera's SDK always
+# calls the API on 443 and cannot be told otherwise.
+#CLOUD_RELAY_PORT=443
+
+# Seconds tailscale-up.sh waits for a default route before giving up; the
+# boot watchdog retries afterwards.  Increase for slow hotel Wi-Fi.
+#TAILSCALE_NETWORK_WAIT=600
+
+# Go memory limit for tailscaled (userspace mode is a Go program).
+#TAILSCALE_GOMEMLIMIT=96MiB
+
+# API port. Keep 443: the camera builds API URLs from a base URL that has no
+# port. Upload URLs returned by the server may use any port.
+SERVER_PORT=443
+
+# Restart instaAIP after installing DNS + CA (0/1).  In tailscale mode, and
+# on X4 Air in every mode, the installer sets this to 1: instaAIP starts
+# before bootup.sh, and a restart avoids any cached DNS answer from that early
+# startup.  On other models in lan mode it is usually unnecessary.
+RESTART_AIP=0
+
+# Start a root telnet shell on port 2323 for debugging (0/1).
+# WARNING: no password. Only enable on a trusted network, disable afterwards.
+START_TELNETD=0
+
+# --- Replacing the app's "enable cloud backup" switch ---------------------
+# The phone app only tells the RTOS to send SysV messages to instaAIP.
+# With this enabled, the SD boot hook sends them itself, so no app, account,
+# binding or subscription is involved.  Requires the camera to be connected
+# to Wi-Fi (home, hotel or phone hotspot) and powered.
+START_CLOUD_UPLOAD=1
+
+# Seconds between scans. New media is picked up automatically; already
+# uploaded files are skipped via the SDK database.  The watcher skips a cycle
+# while the default interface is carrying upload traffic.
+CLOUD_UPLOAD_INTERVAL=3600
+
+# Initial wait after a default route appears (Wi-Fi association + DHCP).
+CLOUD_UPLOAD_DELAY=15
+
+# 1 = send one scan/start sequence, then exit (useful for testing).
+CLOUD_UPLOAD_ONCE=0
+
+# Digits passed to instaAIP: 8 = query uploaded list, 7 = scan DCIM and
+# build the list, 0 = start upload.  Drop the 8 for a full re-upload.
+CLOUD_UPLOAD_ACTIONS=870
+
+# Save the uploader's SQLite records back to the RTOS/FL0 (action 15) before
+# each idle scan, so a reboot only uploads new media.
+CLOUD_UPLOAD_SAVE_DB=1
+
+# One-shot diagnostic dump to diag.log, ~60 s after boot.  Turn this on if
+# uploads do not start; it captures routes, DNS, mounts, the SysV queue,
+# Tailscale status and the tunnel probe.  Safe to leave on (one file).
+CLOUD_DIAG=0
+CLOUD_DIAG_DELAY=60
+
+# The direct uploader talks to the receiver itself, so it does not need the
+# camera's cloud hostnames redirected to localhost.  Redirecting them makes
+# the camera's own connectivity check fail, which can trigger its Wi-Fi
+# power management.  Set 0 only if you go back to the paid-cloud path.
+DISABLE_CLOUD_REDIRECT=1
+
+# --- Direct SD-card backup (does not use instaAIP) ------------------------
+# insupload walks the media tree and pushes new bytes to sdcard_receiver.py
+# on the home server.  This works even if the paid/cloud path never starts,
+# and survives a dropped hotspot: each file resumes at the offset the server
+# already has.  The transport is the Tailscale link (WireGuard), so the
+# receiver is plain HTTP on the tailnet - no port forwarding, no certificate.
+START_SD_UPLOAD=1
+
+# Receiver port.  The default URL is http://<TAILNET_TARGET or SERVER_IP>:8844
+SD_UPLOAD_PORT=8844
+#SD_UPLOAD_URL=http://100.101.102.103:8844
+
+# Optional direct endpoint tried when the tailnet one does not answer.  At
+# home this lets a broken tunnel still back up; at a hotel it simply fails
+# and the tailnet endpoint is retried.
+#SD_UPLOAD_LAN_URL=http://192.168.1.10:8844
+
+# HTTP CONNECT proxy used to reach the tailnet.  tailscaled runs in
+# userspace-networking mode on this camera (no /dev/net/tun), so normal
+# sockets cannot route to 100.x addresses.  Defaults to the tailscaled
+# proxy in tailscale mode and to empty in lan mode.
+#SD_UPLOAD_PROXY=127.0.0.1:8080
+
+# One media root (the camera mounts its card at /tmp/SD0).
+SD_UPLOAD_ROOTS=/tmp/SD0/DCIM
+
+# Seconds between passes in the long-running uploader.  New recordings are
+# picked up without a reboot; a pass is cheap when nothing is new.
+SD_UPLOAD_INTERVAL=300
+
+# How long a pass waits for the receiver before giving up (it retries on the
+# next pass).  Raise this if the hotspot comes up long after the camera.
+SD_UPLOAD_WAIT=600
+
+# 1 = delete a file from the card once the server confirms it is complete.
+# Keep 0 unless you have another copy: the camera is the only source.
+SD_UPLOAD_DELETE=0
+
+# The camera's power management turns Wi-Fi off after a couple of minutes of
+# inactivity, which stops an upload.  The watchdog re-runs station mode when
+# wlan0 loses its address.  Set 0 only for debugging.
+#
+# If the saved SSID is not visible at boot, wifi-connect.sh waits for the
+# stock scan (about 15 s, three passes) and then puts the camera back into
+# exactly its normal AP mode: original hotspot name/password, 192.168.42.1
+# and the stock DHCP range.  In that state the watchdog stays idle and the
+# tunnel/uploader are not started, so the camera behaves like stock.  The
+# watchdog's own reconnects never use that fallback, so a brief hotspot
+# outage at a hotel keeps retrying instead of stranding the camera in AP mode.
+START_WIFI_WATCHDOG=1
+
+# The shared secret lives in sd-upload.token, written by install_to_sd.sh
+# --upload-token.  It must match the receiver's --token/--token-file.

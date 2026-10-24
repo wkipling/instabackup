@@ -1,0 +1,24 @@
+# Example deployment of the direct SD-card receiver.
+#
+#   mkdir -p appdata data
+#   printf '%s\n' "$(openssl rand -hex 24)" > appdata/sd-token
+#   docker compose up -d
+#
+# The camera and the receiver must share the token value.  On Unraid the data
+# path is usually /mnt/user/MyShare/insta360-backup/sdcard and containers run
+# as 99:100; adjust the volume and user below.
+services:
+  insta360-sink:
+    image: ghcr.io/wkipling/instabackup:latest
+    container_name: insta360-sink
+    restart: unless-stopped
+    user: "99:100"
+    ports:
+      - "8844:8844"
+    environment:
+      SDCARD_ROOT: /data
+      SDCARD_PORT: "8844"
+      SDCARD_TOKEN_FILE: /app/sd-token
+    volumes:
+      - ./appdata:/app:ro
+      - ./data:/data

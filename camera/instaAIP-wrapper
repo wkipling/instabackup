@@ -1,0 +1,20 @@
+#!/bin/sh
+# Optional early boot hook for the Insta360 cloud-backup redirect.
+#
+# /etc/init.d/S99bootdone prefers /tmp/SD0/instaAIP over /usr/bin/instaAIP
+# before it runs /tmp/SD0/bootup.sh.  Copy this file to the SD card root as
+# `instaAIP` (executable) to install DNS + CA *before* the daemon starts,
+# removing the startup race entirely.  If bootup.sh is missing or fails, the
+# stock daemon still starts normally.
+#
+# Reverting: delete the `instaAIP` file from the SD card.
+
+SD=$(cd "$(dirname "$0")" 2>/dev/null && pwd)
+[ -n "$SD" ] || SD=/tmp/SD0
+
+if [ -x "$SD/bootup.sh" ]; then
+    # Tell bootup.sh not to start its own copy of the daemon.
+    CLOUD_BACKUP_EARLY=1 "$SD/bootup.sh" >/dev/null 2>&1 || true
+fi
+
+exec /usr/bin/instaAIP "$@"

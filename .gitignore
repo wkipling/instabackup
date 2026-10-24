@@ -1,0 +1,50 @@
+# Local toolchains and reverse-engineering artifacts.  These stay on the
+# developer's machine; the repository contains only source and docs.
+vendor/
+# Reverse-engineering scratch stays local, except the protocol write-up.
+analysis/*
+!analysis/PROTOCOL.md
+tools/jadx/
+tools/jdk/
+tools/ghidra/
+work/
+dist/
+
+# Generated camera binaries (built by camera/build_*.sh / cloudkick_build.py)
+camera/insupload
+camera/insupload-host
+camera/tailrelay
+camera/tailrelay-host
+camera/cloudkick
+camera/libcloudbootstrap.so
+camera/build/
+*.o
+
+# Generated certificates.  make_certs.sh recreates these; private keys must
+# never be committed.
+camera/certs/
+
+# Secrets and live configuration
+camera/.sd-upload.token
+camera/wifi-sta.conf
+**/sd-upload.token
+**/sd-token
+appdata/
+
+# Runtime logs and upload state
+*.log
+camera/bootup.log
+camera/cardcheck.log
+camera/upload.log
+*.part
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+
+# Editors / OS
+.DS_Store
+*.swp
