@@ -429,6 +429,21 @@ TS_SOCKET=${TAILSCALE_SOCKET:-/tmp/tailscaled.sock}
 TS_PROXY_PORT=${TAILSCALE_PROXY_PORT:-8080}
 TS_UP_PID=/tmp/inscloud-tailscale-up.pid
 TS_UP_LOG=/tmp/inscloud-tailscale-up.log
+TS_DEBUG="$SD/tailscale.log"
+
+ts_save_debug() {
+    if [ -f "$TS_DEBUG" ] && [ "$(wc -c < "$TS_DEBUG" 2>/dev/null || echo 0)" -gt 200000 ]; then
+        mv -f "$TS_DEBUG" "$TS_DEBUG.1" 2>/dev/null
+    fi
+    {
+        echo "=== $(date '+%Y-%m-%d %H:%M:%S') tailscale retry diagnostics ==="
+        echo "--- daemon ---"
+        tail -n 60 /tmp/inscloud-tailscaled.log 2>/dev/null
+        echo "--- up ---"
+        tail -n 30 "$TS_UP_LOG" 2>/dev/null
+        echo
+    } >> "$TS_DEBUG" 2>/dev/null
+}
 RELAY="$SD/tailrelay"
 RELAY_PID=/tmp/inscloud-tailrelay.pid
 RELAY_LOG=/tmp/inscloud-tailrelay.log
@@ -447,23 +462,33 @@ start_tailscale_login() {
         return 1
     fi
 
-    # Crash-loop guard.  A Go runtime fault used to restart tailscaled every
-    # 15 s forever, which also made the camera drop off Wi-Fi.  Six failed
-    # starts inside five minutes is a genuine loop; stop and leave the logs.
+    # Crash-loop guard.  Six starts inside five minutes is a genuine loop.
+    # Wait five minutes, then reset the counter and try again; the previous
+    # version rewrote the timestamp on every call, so the window never
+    # expired and one bad afternoon disabled Tailscale until the next boot.
     now=$(date +%s 2>/dev/null || echo 0)
+    if [ -f /tmp/inscloud-ts-backoff ]; then
+        until=$(cat /tmp/inscloud-ts-backoff 2>/dev/null || echo 0)
+        if [ "$now" -lt "$until" ]; then
+            return 1
+        fi
+        rm -f /tmp/inscloud-ts-backoff /tmp/inscloud-ts-start-count \
+              /tmp/inscloud-ts-last-start
+    fi
     last=$(cat /tmp/inscloud-ts-last-start 2>/dev/null || echo 0)
     count=$(cat /tmp/inscloud-ts-start-count 2>/dev/null || echo 0)
-    if [ $((now - last)) -lt 300 ]; then
-        count=$((count + 1))
-    else
-        count=1
+    if [ $((now - last)) -ge 300 ]; then
+        count=0
     fi
-    echo "$now" > /tmp/inscloud-ts-last-start
-    echo "$count" > /tmp/inscloud-ts-start-count
-    if [ "$count" -gt 6 ]; then
-        log "ERROR: tailscale failed $count starts in 5 min; backing off"
+    if [ "$count" -ge 6 ]; then
+        ts_save_debug
+        echo $((now + 300)) > /tmp/inscloud-ts-backoff
+        log "ERROR: tailscale failed $count starts in 5 min; retrying in 5 min"
         return 1
     fi
+    count=$((count + 1))
+    echo "$now" > /tmp/inscloud-ts-last-start
+    echo "$count" > /tmp/inscloud-ts-start-count
 
     sh "$SD/tailscale-up.sh" >>"$TS_UP_LOG" 2>&1 &
     echo $! > "$TS_UP_PID"
@@ -530,7 +555,8 @@ tunnel_watchdog() {
                 start_tailscale_login
             fi
         else
-            rm -f /tmp/inscloud-ts-start-count
+            rm -f /tmp/inscloud-ts-start-count /tmp/inscloud-ts-last-start \
+                  /tmp/inscloud-ts-backoff
         fi
         if [ "$DISABLE_CLOUD_REDIRECT" != "1" ] && ! relay_alive; then
             log "watchdog: tailrelay is gone, restarting"

@@ -1541,3 +1541,41 @@ was shadowing the receiver code baked into the image, so the container kept
 running a stale scp'd copy.  The Dockerfile now installs the receiver under
 `/opt/instabackup/` and the entrypoint execs that path, leaving `/app` free
 for the token mount.
+
+## 16. Tailscale crash-loop diagnosis (2026-10-25)
+
+The card's 106-file queue had drained, but every pass logged
+`primary unreachable; using fallback 192.168.42.120:8844`: the camera had
+never uploaded through the tailnet. `bootup.log` showed `tailscaled` dying
+and the watchdog refusing to restart it ("2691 starts in 5 min") for hours.
+
+Two independent bugs:
+
+* `tailscale-up.sh` ran `tailscale up` even when `tailscaled.state` held a
+  complete login (`LoggedOut: false`, `WantRunning: true`). `tailscaled`
+  reconnects from that state by itself. Running the 25 MB CLI needlessly
+  exposed the known exFAT bad-read/segfault behaviour (`rc=139`).
+* The crash-loop guard rewrote its timestamp on every call, so its five
+  minute window never expired. After six fast failures it blocked every
+  later attempt until the next boot.
+
+Fixes:
+
+* Saved state now skips the CLI entirely; only a first login runs
+  `tailscale up` with the auth key.
+* `tailscaled` is staged in `/tmp` and hash-verified before execution;
+  falling back to the card is logged. The CLI is only staged for first
+  login, then removed to leave room.
+* The guard now allows six attempts per five minutes, then waits five
+  minutes and resets, instead of disabling Tailscale forever.
+* Failed starts append the tails of the daemon and `up` logs to
+  `tailscale.log` on the card (rotated at 200 KB), so the next failure has
+  evidence. `/tmp/inscloud-tailscaled.log` is capped at 256 KB.
+* TUI: when a saved login exists it now offers "Replace it with a new auth
+  key"; replacing removes `tailscaled.state` and the `.logged-in` marker so
+  the camera logs in cleanly.
+* `camera/test_tailscale_up.py` pins both paths with fake binaries: saved
+  state must not execute the CLI; a first login must use the key.
+
+The direct uploader and dashboard are unchanged. `insupload` now uses 8 MiB
+chunks (was 1 MiB) to cut per-request connection setup through tailscaled.

@@ -68,6 +68,7 @@ class Plan:
     port: int = 8844
     token_file: str = ""      # host-side file copied to sd-upload.token
     authkey: str = ""         # first Tailscale login (kept off argv in TUI)
+    reset_tailscale: bool = False  # drop the saved node state before install
     tailscale_dir: str = ""
     delete_after: bool = False
     interval: int = 60
@@ -619,10 +620,27 @@ def _pick_server(scr, plan: Plan) -> bool:
     if plan.mode == "tailscale":
         state = Path(plan.sd) / "tailscale" / "tailscaled.state"
         if state.is_file():
-            _textbox(scr, "Tailscale login",
-                     "A saved Tailscale login already exists on this card:\n\n"
-                     "  %s\n\n"
-                     "No auth key is needed; the camera reuses that node." % state)
+            idx = _menu(
+                scr, "Tailscale login",
+                "A saved Tailscale login already exists on this card:\n\n"
+                "  %s\n\n"
+                "Keep it unless the node was removed in the Tailscale admin "
+                "console or its key expired." % state,
+                ["Keep the saved login",
+                 "Replace it with a new auth key"],
+                "up/down selects, Enter accepts, q goes back")
+            if idx is None:
+                return False
+            if idx == 1:
+                key = _prompt(
+                    scr, "Tailscale login",
+                    "Paste a reusable auth key.  The saved node state will be "
+                    "removed so the camera logs in as a fresh node.",
+                    "Auth key (hidden): ", secret=True)
+                if key is None:
+                    return False
+                plan.authkey = key.strip()
+                plan.reset_tailscale = bool(plan.authkey)
         else:
             key = _prompt(
                 scr, "Tailscale login",
@@ -731,7 +749,9 @@ def _summary(plan: Plan) -> str:
            plan.upload_url(),
            plan.token_file or "none",
            plan.tailscale_dir or "not found (installer will warn)",
-           ("new auth key supplied" if plan.authkey else
+           (("new auth key; saved login will be replaced"
+             if plan.reset_tailscale else
+             "new auth key supplied") if plan.authkey else
             "saved state on card / add a key later"),
            "yes" if plan.delete_after else "no", plan.interval))
 
@@ -755,6 +775,18 @@ def _run_steps(scr, plan: Plan, wifi_conf: str) -> tuple[bool, str]:
 
 def _run_steps_inner(scr, plan: Plan, wifi_conf: str,
                      authkey_file: str) -> tuple[bool, str]:
+    reset_note = ""
+    if plan.reset_tailscale:
+        ts_dir = Path(plan.sd) / "tailscale"
+        for path in [ts_dir / "tailscaled.state", ts_dir / ".logged-in",
+                     *ts_dir.glob("tailscaled.state.tmp*")]:
+            try:
+                path.unlink()
+                reset_note += "removed %s\n" % path
+            except FileNotFoundError:
+                pass
+            except OSError as exc:
+                return False, "could not remove %s: %s" % (path, exc)
     argv = build_install_argv(plan, wifi_conf=wifi_conf,
                               token_file=plan.token_file,
                               authkey_file=authkey_file)
@@ -766,6 +798,8 @@ def _run_steps_inner(scr, plan: Plan, wifi_conf: str,
     except (OSError, subprocess.SubprocessError) as exc:
         return False, "install failed to start:\n\n%s" % exc
     out = "$ %s\n\n%s\n%s" % (" ".join(argv), proc.stdout, proc.stderr)
+    if reset_note:
+        out = reset_note + "\n" + out
     if proc.returncode != 0:
         out += "\n\ninstall_to_sd.sh exited %d" % proc.returncode
         return False, out

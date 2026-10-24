@@ -27,9 +27,27 @@ SD=$(cd "$(dirname "$0")" 2>/dev/null && pwd)
 LOG="$SD/bootup.log"
 TSLOG=/tmp/inscloud-tailscaled.log
 PIDFILE=/tmp/inscloud-tailscaled.pid
+SD_DEBUG="$SD/tailscale.log"
 
 log() {
     echo "$(date '+%Y-%m-%d %H:%M:%S') tailscale: $*" >> "$LOG" 2>/dev/null
+}
+
+# The daemon log lives in /tmp and disappears on reboot.  Copy the tail to the
+# card when a start fails, so the next pull of the card explains why.
+save_debug() {
+    [ -f "$SD/bootup.log" ] || return 0
+    if [ -f "$SD_DEBUG" ] && [ "$(wc -c < "$SD_DEBUG" 2>/dev/null || echo 0)" -gt 200000 ]; then
+        mv -f "$SD_DEBUG" "$SD_DEBUG.1" 2>/dev/null
+    fi
+    {
+        echo "=== $(date '+%Y-%m-%d %H:%M:%S') tailscale start failed ==="
+        echo "--- tailscaled ---"
+        tail -n 60 "$TSLOG" 2>/dev/null
+        echo "--- up ---"
+        tail -n 30 /tmp/inscloud-tailscale-up.log 2>/dev/null
+        echo
+    } >> "$SD_DEBUG" 2>/dev/null
 }
 
 CONF="$SD/cloud-backup.conf"
@@ -94,11 +112,14 @@ copy_verified() {  # src key dst
 }
 
 TSD_RUN="$TSD"
-CLI_RUN="$CLI"
+CLI_RUN=""
+TSD_TMP=/tmp/inscloud-tailscale/tailscaled
+CLI_TMP=/tmp/inscloud-tailscale/tailscale
+mkdir -p /tmp/inscloud-tailscale 2>/dev/null
 
-# Verify the file where it is first.  A matching hash means the bytes the
-# kernel will execute were just read correctly, so no tmpfs copy is needed
-# (and /tmp stays free for the rest of the system).
+# Verify the file where it is first.  A matching hash means the bytes read
+# just now are correct; execution still demand-pages from the card later, so
+# this is only a fallback for when /tmp cannot hold a copy.
 use_verified() {  # path key
     path=$1; key=$2
     want=$(expected_for "$key")
@@ -117,25 +138,34 @@ use_verified() {  # path key
     return 1
 }
 
-if ! use_verified "$TSD" tailscale/tailscaled; then
-    mkdir -p /tmp/inscloud-tailscale 2>/dev/null
-    TSD_RUN=/tmp/inscloud-tailscale/tailscaled
-    if ! copy_verified "$TSD" tailscale/tailscaled "$TSD_RUN"; then
+# On a normal boot the saved node state is enough: tailscaled reconnects on
+# its own and the 25 MB CLI never has to run (it is the component that has
+# been seen to segfault after a bad card read).  Stage the daemon in tmpfs so
+# the kernel is not demand-paging a 36 MB executable off exFAT.
+if [ -s "$STATE" ]; then
+    if pidof tailscaled >/dev/null 2>&1; then
+        # Another retry already started the daemon; never overwrite a
+        # running executable (ETXTBSY) just to stage an unused copy.
+        log "tailscaled already running; keeping the current binary"
+        TSD_RUN="$TSD_TMP"
+        [ -x "$TSD_RUN" ] || TSD_RUN="$TSD"
+    elif copy_verified "$TSD" tailscale/tailscaled "$TSD_TMP"; then
+        TSD_RUN="$TSD_TMP"
+    elif use_verified "$TSD" tailscale/tailscaled; then
+        log "WARN: /tmp could not hold tailscaled; running from the card"
+    else
+        save_debug
         log "ERROR: no verified tailscaled copy; refusing to run it"
         exit 1
     fi
-fi
-
-if ! use_verified "$CLI" tailscale/tailscale; then
-    mkdir -p /tmp/inscloud-tailscale 2>/dev/null
-    CLI_RUN=/tmp/inscloud-tailscale/tailscale
-    if ! copy_verified "$CLI" tailscale/tailscale "$CLI_RUN"; then
-        # The 25 MB CLI has been observed to return different bytes on every
-        # read on this card, while tailscaled (36 MB) reads correctly.  The
-        # daemon and its saved node state are enough to bring up the tunnel;
-        # only a fresh login would need the CLI.
-        log "WARN: tailscale CLI unreadable; continuing with saved node state"
-        CLI_RUN=""
+else
+    # First login needs both binaries at once.  /tmp cannot hold 61 MB, so
+    # keep the daemon on the card for this one boot and stage the CLI, which
+    # is the smaller and more read-sensitive of the two.
+    if ! use_verified "$TSD" tailscale/tailscaled; then
+        save_debug
+        log "ERROR: no verified tailscaled copy; refusing to run it"
+        exit 1
     fi
 fi
 
@@ -168,6 +198,12 @@ start_daemon() {
     fi
 
     mkdir -p "$(dirname "$STATE")" 2>/dev/null
+    # /tmp is only 78 MB on this camera and the daemon's log lives there.
+    # Cap it so a retry loop cannot fill tmpfs and take Wi-Fi down with it.
+    if [ -f "$TSLOG" ] && [ "$(wc -c < "$TSLOG" 2>/dev/null || echo 0)" -gt 262144 ]; then
+        tail -c 65536 "$TSLOG" > "$TSLOG.tmp" 2>/dev/null && \
+            mv -f "$TSLOG.tmp" "$TSLOG" 2>/dev/null
+    fi
     log "starting tailscaled (userspace, proxy 127.0.0.1:$PROXY_PORT)"
     GOMEMLIMIT="$MEMMAX" GOGC=50 GODEBUG=asyncpreemptoff=1 "$TSD_RUN" \
         --tun=userspace-networking \
@@ -197,24 +233,34 @@ start_daemon() {
     return 1
 }
 
+prepare_cli() {
+    [ -n "$CLI_RUN" ] && return 0
+    if copy_verified "$CLI" tailscale/tailscale "$CLI_TMP"; then
+        CLI_RUN="$CLI_TMP"
+    elif use_verified "$CLI" tailscale/tailscale; then
+        log "WARN: /tmp could not hold the tailscale CLI; running it from the card"
+        CLI_RUN="$CLI"
+    else
+        log "WARN: tailscale CLI unreadable; continuing with saved node state"
+        return 1
+    fi
+    return 0
+}
+
 login() {
-    if [ -z "$CLI_RUN" ]; then
-        log "no usable CLI; relying on saved node state"
+    # A saved node state is a complete login.  tailscaled reconnects by
+    # itself, so do not involve the CLI at all: running `tailscale up` here
+    # only duplicated work and exposed the flaky 25 MB binary.
+    if [ -s "$STATE" ]; then
+        log "saved node state; tailscaled will reconnect without the CLI"
+        touch "$TS_DIR/.logged-in" 2>/dev/null
         return 0
     fi
 
-    # Never run `tailscale up` on a node that is already Running: the CLI
-    # has been observed to segfault when it is asked to re-apply an
-    # unchanged profile, and a watchdog retry used to trigger exactly that.
-    state=$("$CLI_RUN" --socket="$SOCK" status --json 2>/dev/null \
-        | grep -o '"BackendState"[[:space:]]*:[[:space:]]*"[A-Za-z]*"' \
-        | head -n 1)
-    case "$state" in
-        *Running*)
-            log "node already Running; not re-running tailscale up"
-            return 0
-            ;;
-    esac
+    if ! prepare_cli; then
+        log "ERROR: no saved state and no usable CLI; cannot join tailnet"
+        return 1
+    fi
 
     if [ -n "$AUTHKEY" ]; then
         log "running tailscale up with auth key"
@@ -249,6 +295,11 @@ login() {
     else
         log "WARN: no tailnet IPv4 yet (still connecting?)"
     fi
+    # rc=0 means the control plane accepted the key; the address can arrive
+    # a moment later.  Record the login so later boots skip the CLI.
+    touch "$TS_DIR/.logged-in" 2>/dev/null
+    # The CLI is only needed for this one login; free /tmp for the daemon.
+    rm -f "$CLI_TMP" 2>/dev/null
     return 0
 }
 
@@ -257,8 +308,11 @@ if ! wait_network; then
 fi
 
 if ! start_daemon; then
+    save_debug
     exit 1
 fi
 
 login
-exit $?
+rc=$?
+[ "$rc" -eq 0 ] || save_debug
+exit $rc
