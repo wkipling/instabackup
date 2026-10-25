@@ -36,10 +36,12 @@ docker compose up -d
 Put the card in your PC and run:
 
 ```sh
-python3 camera/setup_tui.py
+./instabackup-tui
 ```
 
-Pick the card, the Wi-Fi network or phone hotspot, the server's Tailscale IP
+It finds the mounted card automatically. To skip the card prompt, pass the
+mountpoint (for example `./instabackup-tui --sd /run/media/you/disk`). Pick
+the Wi-Fi network or phone hotspot, the server's Tailscale IP
 (`tailscale ip -4` on the server), and the token file printed by step 1. The
 TUI writes the card, verifies it, and prints a checklist. Python 3.10+ is the
 only requirement; the Wi-Fi list uses `nmcli` when available, and manual SSID

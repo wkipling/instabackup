@@ -1,0 +1,12 @@
+#!/bin/sh
+# Run the SD-card onboarding TUI from any directory.
+#
+#   ./instabackup-tui
+#   ./instabackup-tui --sd /run/media/$USER/disk
+#
+# The card is detected automatically when --sd is omitted.
+set -eu
+# Resolve symlinks, so the same launcher works when linked into ~/.local/bin.
+SELF=$(readlink -f "$0" 2>/dev/null || printf '%s' "$0")
+HERE=$(CDPATH= cd -- "$(dirname -- "$SELF")" && pwd)
+exec python3 "$HERE/camera/setup_tui.py" "$@"

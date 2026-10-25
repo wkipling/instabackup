@@ -888,15 +888,37 @@ def _checklist(plan: Plan) -> str:
     return "\n".join(lines)
 
 
-def interactive() -> int:
+def plan_from_args(args: argparse.Namespace) -> Plan:
+    """Pre-seed the interactive plan from the command line.
+
+    Every value is still shown and confirmed in the TUI; --sd only skips the
+    "which card?" prompt.
+    """
+    return Plan(
+        sd=args.sd or "",
+        mode=args.mode,
+        target=args.target or "",
+        server_ip=args.server_ip or "",
+        port=args.port,
+        token_file=args.token_file or "",
+        tailscale_dir=args.tailscale_dir or find_tailscale_dir(),
+        delete_after=args.delete_after,
+        interval=args.interval,
+        lan_url=args.lan_url or "",
+        no_wifi=args.no_wifi,
+    )
+
+
+def interactive(args: argparse.Namespace | None = None) -> int:
     if curses is None:  # pragma: no cover
         print("curses is not available; use --non-interactive",
               file=sys.stderr)
         return 2
 
-    plan = Plan(tailscale_dir=find_tailscale_dir())
+    plan = (plan_from_args(args) if args is not None
+            else Plan(tailscale_dir=find_tailscale_dir()))
     default_token = HERE / TOKEN_NAME
-    if default_token.is_file():
+    if not plan.token_file and default_token.is_file():
         plan.token_file = str(default_token)
 
     def app(scr):
@@ -907,12 +929,22 @@ def interactive() -> int:
         scratch = tempfile.mkdtemp(prefix="insta360-setup-")
         wifi_conf = ""
         try:
-            sd = _pick_card(scr)
-            if not sd:
-                return 1
-            plan.sd = sd
+            if plan.sd:
+                if not os.path.isdir(plan.sd):
+                    _textbox(scr, "SD card",
+                             "That path is not a mounted directory:\n\n  %s"
+                             % plan.sd)
+                    return 1
+            else:
+                sd = _pick_card(scr)
+                if not sd:
+                    return 1
+                plan.sd = sd
 
-            picked = _pick_wifi(scr, plan.sd)
+            if plan.no_wifi:
+                picked = ("", "", "", True)
+            else:
+                picked = _pick_wifi(scr, plan.sd)
             if picked is None:
                 return 1
             ssid, password, country, no_wifi = picked
@@ -1080,7 +1112,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.dry_run:
         print("--dry-run needs --non-interactive", file=sys.stderr)
         return 2
-    return interactive()
+    return interactive(args)
 
 
 if __name__ == "__main__":

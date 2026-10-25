@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 
@@ -163,6 +164,33 @@ class RuntimeValues(unittest.TestCase):
                       authkey="tskey-auth-test")
         self.assertEqual(t.conf_values(plan, has_token=False)
                          ["TAILSCALE_AUTHKEY"], "tskey-auth-test")
+
+
+class PlanFromArgs(unittest.TestCase):
+    def test_sd_and_server_are_preselected(self):
+        args = types.SimpleNamespace(
+            sd="/run/media/me/disk", mode="tailscale",
+            target="100.64.0.5", server_ip="", port=8844,
+            token_file="/tmp/tok", tailscale_dir="/opt/ts",
+            delete_after=True, interval=120, lan_url="", no_wifi=False)
+        plan = t.plan_from_args(args)
+        self.assertEqual(plan.sd, "/run/media/me/disk")
+        self.assertEqual(plan.mode, "tailscale")
+        self.assertEqual(plan.target, "100.64.0.5")
+        self.assertEqual(plan.port, 8844)
+        self.assertEqual(plan.token_file, "/tmp/tok")
+        self.assertEqual(plan.interval, 120)
+        self.assertTrue(plan.delete_after)
+
+    def test_sd_is_optional(self):
+        args = types.SimpleNamespace(
+            sd=None, mode="lan", target="", server_ip="10.0.0.2",
+            port=8844, token_file="", tailscale_dir="/opt/ts",
+            delete_after=False, interval=60, lan_url="", no_wifi=True)
+        plan = t.plan_from_args(args)
+        self.assertEqual(plan.sd, "")
+        self.assertEqual(plan.server_ip, "10.0.0.2")
+        self.assertTrue(plan.no_wifi)
 
 
 class Wifi(unittest.TestCase):
