@@ -193,6 +193,41 @@ class PlanFromArgs(unittest.TestCase):
         self.assertTrue(plan.no_wifi)
 
 
+class TitleLayout(unittest.TestCase):
+    class Screen:
+        def __init__(self, w=80, h=24):
+            self.w, self.h = w, h
+            self.calls = []
+
+        def getmaxyx(self):
+            return self.h, self.w
+
+        def erase(self):
+            self.calls = []
+
+        def addstr(self, y, x, text, attr=0):
+            self.calls.append((y, x, text))
+
+    def test_multiline_subtitle_pushes_menu_down(self):
+        scr = self.Screen()
+        y = t._title(scr, "Tailscale login",
+                     "A saved login exists:\n/sk/tailscale/tailscaled\nKeep it.")
+        rows = [(row, text) for row, _x, text in scr.calls]
+        self.assertIn((2, "A saved login exists:"), rows)
+        self.assertIn((3, "/sk/tailscale/tailscaled"), rows)
+        self.assertIn((4, "Keep it."), rows)
+        self.assertGreaterEqual(y, 6,
+                                "menu must start below the subtitle")
+
+    def test_long_subtitle_wraps(self):
+        scr = self.Screen(w=40)
+        y = t._title(scr, "Wi-Fi", "word " * 30)
+        self.assertGreater(y, 4)
+        for _row, x, text in scr.calls[1:]:
+            self.assertEqual(x, 2)
+            self.assertLessEqual(len(text), 36)
+
+
 class Wifi(unittest.TestCase):
     def test_render(self):
         plan = t.Plan(ssid="Hotel", password="pw", country="AU")

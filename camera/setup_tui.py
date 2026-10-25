@@ -34,6 +34,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import textwrap
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -392,9 +393,25 @@ def _title(scr, heading: str, subtitle: str = "") -> int:
     h, w = scr.getmaxyx()
     scr.erase()
     _addstr(scr, 0, 0, heading.ljust(w - 1), curses.A_REVERSE | curses.A_BOLD)
+    y = 2
     if subtitle:
-        _addstr(scr, 2, 2, subtitle[:w - 4])
-    return 4
+        # Explicit newlines are paragraph breaks; long paths and sentences
+        # wrap.  Returning the real bottom keeps menu items from being drawn
+        # over the second line of the subtitle.
+        width = max(10, w - 4)
+        lines: list[str] = []
+        for para in subtitle.split("\n"):
+            if para:
+                lines.extend(textwrap.wrap(para, width) or [""])
+            else:
+                lines.append("")
+        for line in lines:
+            if y >= h - 2:
+                break
+            if line:
+                _addstr(scr, y, 2, line)
+            y += 1
+    return max(4, y + 1)
 
 
 def _footer(scr, text: str) -> None:
@@ -539,6 +556,10 @@ def _pick_wifi(scr, sd: str = "") -> tuple[str, str, str, bool] | None:
     profile alone".  None means the user cancelled the whole setup.
     """
     while True:
+        _title(scr, "Wi-Fi",
+               "Scanning for networks...\n\nThis can take a few seconds.")
+        _footer(scr, "please wait")
+        scr.refresh()
         nets = scan_wifi()
         preserved = _existing_ssid(sd)
         subtitle = ("Choose the network the camera should join.  At a hotel "
@@ -606,84 +627,90 @@ def _pick_wifi(scr, sd: str = "") -> tuple[str, str, str, bool] | None:
 
 
 def _pick_server(scr, plan: Plan) -> bool:
-    mode = _menu(
-        scr, "Server", "How should the camera reach your home server?",
-        ["Tailscale (recommended: works on any Wi-Fi, no port forwarding)",
-         "LAN only (same network as the server)"],
-        "up/down selects, Enter accepts, q goes back")
-    if mode is None:
-        return False
-    plan.mode = "tailscale" if mode == 0 else "lan"
-
-    if plan.mode == "tailscale":
-        guessed = detect_tailnet_ip()
-        target = _prompt(
-            scr, "Server",
-            "Tailnet IPv4 of the server (on the server: tailscale ip -4).",
-            "Tailnet IP: ", default=guessed or plan.target)
-        if target is None:
+    # The saved-login page can return here, so the whole block is a loop.
+    while True:
+        mode = _menu(
+            scr, "Server", "How should the camera reach your home server?",
+            ["Tailscale (recommended: works on any Wi-Fi, no port forwarding)",
+             "LAN only (same network as the server)"],
+            "up/down selects, Enter accepts, q cancels setup")
+        if mode is None:
             return False
-        plan.target = target.strip()
-    else:
-        ip = _prompt(scr, "Server", "IPv4 address of the home server.",
-                     "Server IP: ", default=plan.server_ip)
-        if ip is None:
-            return False
-        plan.server_ip = ip.strip()
+        plan.mode = "tailscale" if mode == 0 else "lan"
 
-    port = _prompt(scr, "Server",
-                   "Receiver port (docker -p 8844:8844).",
-                   "Port: ", default=str(plan.port))
-    if port is None:
-        return False
-    try:
-        plan.port = max(1, min(65535, int(port or "8844")))
-    except ValueError:
-        plan.port = 8844
-
-    if plan.mode == "tailscale":
-        state = Path(plan.sd) / "tailscale" / "tailscaled.state"
-        if state.is_file():
-            idx = _menu(
-                scr, "Tailscale login",
-                "A saved Tailscale login already exists on this card:\n\n"
-                "  %s\n\n"
-                "Keep it unless the node was removed in the Tailscale admin "
-                "console or its key expired." % state,
-                ["Keep the saved login",
-                 "Replace it with a new auth key"],
-                "up/down selects, Enter accepts, q goes back")
-            if idx is None:
+        if plan.mode == "tailscale":
+            guessed = detect_tailnet_ip()
+            target = _prompt(
+                scr, "Server",
+                "Tailnet IPv4 of the server (on the server: tailscale ip -4).",
+                "Tailnet IP: ", default=guessed or plan.target)
+            if target is None:
                 return False
-            if idx == 1:
+            plan.target = target.strip()
+        else:
+            ip = _prompt(scr, "Server", "IPv4 address of the home server.",
+                         "Server IP: ", default=plan.server_ip)
+            if ip is None:
+                return False
+            plan.server_ip = ip.strip()
+
+        port = _prompt(scr, "Server",
+                       "Receiver port (docker -p 8844:8844).",
+                       "Port: ", default=str(plan.port))
+        if port is None:
+            return False
+        try:
+            plan.port = max(1, min(65535, int(port or "8844")))
+        except ValueError:
+            plan.port = 8844
+
+        if plan.mode == "tailscale":
+            state = Path(plan.sd) / "tailscale" / "tailscaled.state"
+            if state.is_file():
+                idx = _menu(
+                    scr, "Tailscale login",
+                    "A saved Tailscale login already exists on this card:\n"
+                    "%s\n"
+                    "Keep it unless the node was removed in the Tailscale "
+                    "admin console or its key expired." % state,
+                    ["Keep the saved login",
+                     "Replace it with a new auth key",
+                     "Back"],
+                    "up/down selects, Enter accepts, q cancels setup")
+                if idx is None:
+                    return False
+                if idx == 2:
+                    continue
+                if idx == 1:
+                    key = _prompt(
+                        scr, "Tailscale login",
+                        "Paste a reusable auth key.  The saved node state "
+                        "will be removed so the camera logs in as a fresh "
+                        "node.",
+                        "Auth key (hidden): ", secret=True)
+                    if key is None:
+                        return False
+                    plan.authkey = key.strip()
+                    plan.reset_tailscale = bool(plan.authkey)
+            else:
                 key = _prompt(
                     scr, "Tailscale login",
-                    "Paste a reusable auth key.  The saved node state will be "
-                    "removed so the camera logs in as a fresh node.",
+                    "No saved login.  Generate a reusable auth key at "
+                    "login.tailscale.com/admin/settings/keys, or leave blank "
+                    "to add one later in cloud-backup.conf.",
                     "Auth key (hidden): ", secret=True)
                 if key is None:
                     return False
                 plan.authkey = key.strip()
-                plan.reset_tailscale = bool(plan.authkey)
-        else:
-            key = _prompt(
-                scr, "Tailscale login",
-                "No saved login.  Generate a reusable auth key at "
-                "login.tailscale.com/admin/settings/keys, or leave blank "
-                "to add one later in cloud-backup.conf.",
-                "Auth key (hidden): ", secret=True)
-            if key is None:
-                return False
-            plan.authkey = key.strip()
 
-    ok, msg = probe_receiver(plan.effective_server(), plan.port)
-    _textbox(scr, "Server reachability",
-             ("Reachable.\n\n  %s\n" % msg) if ok else
-             ("Not reachable right now.\n\n  %s\n\n"
-              "That is only a warning: the camera may reach it later over "
-              "the tailnet.  Check the address and port before continuing."
-              % msg))
-    return True
+        ok, msg = probe_receiver(plan.effective_server(), plan.port)
+        _textbox(scr, "Server reachability",
+                 ("Reachable.\n\n  %s\n" % msg) if ok else
+                 ("Not reachable right now.\n\n  %s\n\n"
+                  "That is only a warning: the camera may reach it later over "
+                  "the tailnet.  Check the address and port before continuing."
+                  % msg))
+        return True
 
 
 def _pick_token(scr, plan: Plan) -> bool:
